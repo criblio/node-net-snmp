@@ -2466,6 +2466,81 @@ Session.prototype.table = function () {
 	return this;
 };
 
+/**
+ * @typedef {Object} Varbind
+ * @property {string} oid - The Object Identifier
+ * @property {number} type - The type of the varbind
+ * @property {*} value - The value of the varbind
+ */
+
+/**
+ * @typedef {Object} SerializationOptions
+ * @property {number} idBitsSize - The size of ID bits
+ * @property {number} version - The SNMP version v1=0, v2c=1, v3=3
+ * @property {number} [upTime] - The system uptime, optional
+ * @property {Object} [engine] - The engine object (for Version 3)
+ * @property {string} [engine.engineID] - The engine ID
+ * @property {Object} [user] - The user object (for Version 3)
+ * @property {string} [community] - The community string (for Version 1 and 2c)
+ */
+
+/**
+ * Serializes an SNMP Trap message
+ * @param {string|number} typeOrOid - The trap type or OID
+ * @param {Varbind[]} varbinds - An array of varbind objects
+ * @param {SerializationOptions} options - Options for serialization
+ * @returns {Buffer} The serialized SNMP Trap message
+ */
+function serializeTrap(typeOrOid, varbinds, options) {
+	var pdu, pduVarbinds = [];
+
+	for (var i = 0; i < varbinds.length; i++) {
+		var varbind = {
+			oid: varbinds[i].oid,
+			type: varbinds[i].type,
+			value: varbinds[i].value
+		};
+		pduVarbinds.push (varbind);
+	}
+	
+	var id = _generateId (options.idBitsSize);
+
+	if (options.version == Version2c || options.version == Version3 ) {
+		if (typeof typeOrOid != "string")
+			typeOrOid = "1.3.6.1.6.3.1.1.5." + (typeOrOid + 1);
+
+		pduVarbinds.unshift (
+			{
+				oid: "1.3.6.1.2.1.1.3.0",
+				type: ObjectType.TimeTicks,
+				value: options.upTime || Math.floor (process.uptime () * 100)
+			},
+			{
+				oid: "1.3.6.1.6.3.1.1.4.1.0",
+				type: ObjectType.OID,
+				value: typeOrOid
+			}
+		);
+
+		pdu = TrapV2Pdu.createFromVariables (id, pduVarbinds, options);
+	} else {
+		pdu = TrapPdu.createFromVariables (typeOrOid, pduVarbinds, options);
+	}
+
+	if ( options.version == Version3 ) {
+		var msgSecurityParameters = {
+			msgAuthoritativeEngineID: options.engine.engineID,
+			msgAuthoritativeEngineBoots: 0,
+			msgAuthoritativeEngineTime: 0
+		};
+		message = Message.createRequestV3 (options.user, msgSecurityParameters, pdu);
+	} else {
+		message = Message.createCommunity (options.version, options.community, pdu);
+	}
+
+	return message.toBuffer();
+}
+
 Session.prototype.trap = function () {
 	var req = {};
 
@@ -6364,6 +6439,8 @@ exports.createAgent = Agent.create;
 exports.createModuleStore = ModuleStore.create;
 exports.createSubagent = Subagent.create;
 exports.createMib = Mib.create;
+
+exports.serializeTrap = serializeTrap;
 
 exports.isVarbindError = isVarbindError;
 exports.varbindError = varbindError;
